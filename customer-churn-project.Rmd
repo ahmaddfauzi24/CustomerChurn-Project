@@ -1,0 +1,243 @@
+---
+title: "Customer Churn Prediction"
+author: "Ahmad Fauzi"
+date: "20 Februari 2024"
+output: 
+  rmdformats::downcute:
+    df_print: paged
+    css: assets/style.css
+---
+
+```{r setup, include=FALSE}
+# clear-up the environment
+rm(list = ls())
+
+# chunk options
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  comment = "#>",
+  echo = TRUE
+)
+
+# scientific notation
+options(scipen = 9999)
+```
+
+```{r message=F, warning=F, echo=FALSE}
+library(tidyverse)
+library(rsample)
+library(MLmetrics)
+library(inspectdf)
+library(caret)
+library(ROCR)
+```
+
+# Background
+
+Surely, we've all experienced dissatisfaction with a telecommunications company's services that caused us to choose to switch to another service provider. This phenomenon is known as **Customer Churn**. In the world of telecommunications business, Customer Churn is the tendency of customers to stop interacting with a company. This can be caused by various factors, such as too high prices, poor signal quality, or unsatisfactory service. To anticipate Customer Churn, companies need to understand the types of **churn**, namely **voluntary churn** and **involuntary churn**. *Voluntary churn occurs when a customer deliberately chooses to unsubscribe and switch to another provider, while involuntary churn is caused by external factors such as moving locations or factors that cannot be controlled by the customer. 
+
+By utilizing machine learning technology, companies can develop predictive models to identify customers who are likely to **churn** and take preventive measures to retain them.
+
+# Workflow
+
+## Import Data
+
+The data used is customer profile data from a telecommunications company obtained from [Kaggle](https://www.kaggle.com/blastchar/telco-customer-churn). The dataset contains data for 7043 customers which includes customer demographics, account payment information, and service products registered by each customer. From this information, we want to predict whether a customer will `Churn` or not.
+
+```{r}
+customer <- read.csv("data_input/Telco-Customer-Churn.csv", stringsAsFactors = T)
+head(customer)
+```
+
+The following is a description of each variable:
+
+- `CustomerID`: Customer ID
+- `Gender`: Gender of the customer i.e. Female and Male
+- `SeniorCitizen`: Whether the customer is a senior citizen (0: No, 1: Yes)
+- `Partner`: Whether the customer has a partner or not (Yes, No)
+- `Dependents`: Whether the customer has dependents or not (Yes, No)
+- `Tenure`: Number of months in using the company`s product
+- `MultipleLines`: Whether or not the customer has multiple lines (Yes, No, No phone service)
+- `OnlineSecurity`: Whether or not the customer has online security
+- `OnlineBackup`: Whether or not the customer has online backup
+- `DeviceProtection`: Whether or not the customer has device protection
+- `TechSupport`: Whether or not the customer has technical support
+- `StreamingTV`: Whether or not the customer subscribes to streaming TV
+- `StreamingMovies`: Whether or not the customer subscribes to streaming movies
+- `Contract`: Terms of the subscription contract (Month-to-month, One year, Two year)
+- `PaperlessBilling`: Whether the customer has paperless billing or not (Yes, No)
+- `PaymentMethod`: Payment method (Electronic check, Mailed check, Bank transfer (automatic), Credit card (automatic))
+- `MonthlyCharges`: The amount of payments made each month
+- `TotalCharges`: The total amount charged by the customer
+- `Churn`: Whether the customer Churn or not (Yes or No)
+
+## Data Cleansing
+
+Before entering the modeling stage, let's clean up the data first.
+
+**First**, check the completeness of the data, from this stage we will get information whether our data is complete.
+
+```{r}
+colSums(is.na(customer))
+```
+
+Out of 7043 observations, there are 11 observations in the `TotalCharges` column that are *missing values (NA)*. Since the number of NAs is quite small, we can discard these observations.
+
+**Secondly**, we need to discard the variable that is not relevant to the modeling, `CustomerID`.
+
+**Third**, we adjust the data type of `SeniorCitizen` column from numeric to categorical.
+
+```{r}
+customer <- customer %>% 
+            select(-customerID) %>% 
+            na.omit() %>% 
+            mutate(SeniorCitizen = as.factor(SeniorCitizen)) 
+```
+
+## Exploratory Data Analysis
+
+Next, let's explore the data for both categorical and numerical columns.
+
+To find out the proportion of classes in each categorical variable, we can use the `inspect_cat` function from the package `inspectdf` as follows:
+
+```{r}
+customer %>% inspect_cat() %>% show_plot()
+```
+
+From the visualization above, it can be seen that the class proportion for the target variable `Churn` is more in the **No** category than **Yes**. Then, for the other variables, the proportion is mostly balanced.
+
+Next we can explore the distribution for numeric data variables with the `inspect_num` function from the package `inspectdf` as follows:
+
+```{r}
+customer %>% inspect_num() %>% show_plot()
+```
+
+From the visualization above, it can be concluded that the distribution of numerical data is quite diverse for each variable.
+
+## Train-Test Splitting
+
+After we perform data cleansing and data exploration, the next step is train-test splitting, which is dividing the data into train and test data with a proportion of 80:20. The train data is used to build the model while the test data is used to evaluate the model performance.
+
+```{r}
+set.seed(100)
+idx <- initial_split(data = customer,
+                     prop = 0.8,
+                     strata = "Churn")
+data_train <- training(idx)
+data_test <- testing(idx)
+```
+
+## Modeling
+
+Next, we will perform modeling using the ***Random Forest*** algorithm (package `caret`) by specifying the number of cross validation, repetitions, and specifying the target variable name as well as the predictors used from the train data.
+
+```{r eval=FALSE}
+set.seed(100)
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 5,
+                     repeats = 3)
+model_forest <- train(Churn ~ .,
+                      data = data_train,
+                      method = "rf",
+                      trControl = ctrl)
+# saveRDS(model_forest, "assets/model_forest.rds")
+```
+
+The above chunk takes quite a long time to execute. To shorten the time, let's load the model that was previously saved into an RDS file.
+
+```{r}
+model_forest <- readRDS("assets/model_forest.rds")
+model_forest
+```
+
+For now, we obtain a **Random Forest** model with an accuracy rate in the train data of **78.38%** with an optimum **try value of 2**.
+
+Next, we will do tuning model by doing upsampling, which means we will equalize the proportion of target variables to be equal.
+
+```{r}
+data_train_up <- upSample(x = data_train[, -20],
+                          y = data_train$Churn,
+                          yname = "Churn")
+
+# cek proporsi
+prop.table(table(data_train_up$Churn))
+```
+
+From the data that has been upsampling, we will recreate the **Random Forest** model.
+
+```{r eval=FALSE}
+set.seed(100)
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 5,
+                     repeats = 3)
+model_forest_up <- train(Churn ~ .,
+                         data = data_train_up,
+                         method = "rf",
+                         trControl = ctrl)
+# saveRDS(model_forest_up, "assets/model_forest_up.rds")
+```
+
+To shorten the time, let's load the previously saved model into an RDS file.
+
+```{r}
+model_forest_up <- readRDS("assets/model_forest_up.rds")
+model_forest_up
+```
+
+After *upsampling*, it can be seen that the accuracy value in the train data increased to **89.11%** with an optimum **try value of 16**.
+
+## Model Evaluation
+
+Finally, let's test the random forest model that we have created on the test data. In this case, we want to get the largest recall or sensitivity value possible so that our model can detect as many churn customers as possible.
+
+```{r}
+pred <- predict(model_forest_up, newdata = data_test, type = "prob")
+pred$result <- as.factor(ifelse(pred$Yes > 0.45, "Yes", "No"))
+confusionMatrix(pred$result, data_test$Churn, positive = "Yes")
+```
+
+By using a threshold of 0.45, we obtained a recall of **94.92%** with an accuracy of **98.51%**.
+
+In addition to using the confusion matrix, we can form a ROC curve along with the AUC value by using the package `ROCR` as follows:
+
+```{r}
+pred_prob <- predict(object = model_forest_up, newdata = data_test, type = "prob")
+pred <-  prediction(pred_prob[,2], labels = data_test$Churn)
+perf <- performance(prediction.obj = pred, measure = "tpr", x.measure = "fpr")
+plot(perf)
+```
+
+```{r}
+auc <- performance(pred, measure = "auc")
+auc@y.values[[1]]
+```
+
+The AUC value above states that our model performs **99.25%** in separating the distribution of the positive `Churn` class from the negative in the test data.
+
+# Conclusion
+
+With a model to predict customer churn, telecommunication companies easily know which customers have a tendency to churn. 
+
+The following visualization shows the prediction results for two customers. Both customers have a high chance of churn and we can also see which variables supports and contradicts the model's prediction results.
+
+```{r}
+library(lime)
+test_x <- data_test %>% 
+  dplyr::select(-Churn)
+
+explainer <- lime(test_x, model_forest_up)
+explanation <- lime::explain(test_x[1:2,],
+                             explainer, 
+                             labels = c("Yes"),
+                             n_features = 8)
+plot_features(explanation)
+```
+
+It can be concluded that the strongest reason these two customers are likely to churn is because they have a monthly contract and tenure which is still below 8 months. From here, the marketing party can promote products with a longer term contract so that these two customers can stay longer.
+
+# External Resources
+
+- Dataset: [Kaggle: Telco Customer Churn](https://www.kaggle.com/blastchar/telco-customer-churn)
+- Repository: [GitHub: Ahmad Fauzi](https://github.com/ahmaddfauzi24/CustomerChurn-Project)
